@@ -1,0 +1,6 @@
+{
+  "name": "precise-knowledge-retriever",
+  "version": "1.0.0",
+  "description": "精确匹配知识检索器",
+  "entry": "scripts/retrieve.py"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "keyword-extractor",
+  "version": "1.0.0",
+  "description": "从用户需求描述中智能提取核心关键词，用于知识库检索",
+  "entry": "scripts/extract_keywords.py",
+  "dependencies": ["requests"]
+}

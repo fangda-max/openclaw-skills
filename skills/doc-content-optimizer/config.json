@@ -1,0 +1,18 @@
+{
+  "base_path": "${WORKSPACE_DATA_DIR}",
+  "llm": {
+    "provider": "minimax",
+    "api_key": "${API_KEY}",
+    "api_url": "https://api.minimaxi.com/v1/text/chatcompletion_v2",
+    "model": "MiniMax-M2.7",
+    "temperature": 0.5,
+    "max_tokens": 20000
+  },
+  "input_file": "${base_path}/prd_material_precise.md",
+  "output_file": "${base_path}/prd_material_optimized.md",
+  "report_file": "${base_path}/optimization_report.json",
+  "quality_thresholds": {
+    "completeness": 0.95,
+    "consistency": 0.70
+  }
+}

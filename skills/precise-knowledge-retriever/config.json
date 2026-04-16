@@ -1,0 +1,7 @@
+{
+  "base_path": "${WORKSPACE_DATA_DIR}",
+  "vector_db_path": "${base_path}/vector-db-materials",
+  "kg_path": "${base_path}/knowledge_graph.json",
+  "keywords_file": "${base_path}/keywords.json",
+  "output_file": "${base_path}/prd_material_precise.md"
+}

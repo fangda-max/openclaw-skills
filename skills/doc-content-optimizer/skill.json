@@ -1,0 +1,7 @@
+{
+  "name": "doc-content-optimizer",
+  "version": "1.0.0",
+  "description": "优化检索文档的连贯性和可读性，严格保留原始信息",
+  "entry": "scripts/optimize_document.py",
+  "dependencies": ["requests"]
+}
