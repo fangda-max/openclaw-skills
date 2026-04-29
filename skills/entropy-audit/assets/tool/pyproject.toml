@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "entropy-audit"
+version = "0.2.0"
+description = "Entropy governance audit CLI with Java-first language adapters."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "OpenAI Codex" }
+]
+
+[project.scripts]
+entropy-audit = "entropy_audit.cli:main"
+entropy_audit = "entropy_audit.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["entropy_audit*"]

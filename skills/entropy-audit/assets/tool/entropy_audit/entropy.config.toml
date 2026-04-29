@@ -1,0 +1,2103 @@
+# =========================================
+# BPC_V2 熵审计总配置
+# 这份文件是当前仓库的单一主配置入口。
+# 主要分为三层：
+# 1. 项目基础配置：project / scope / paths
+# 2. 代码本体熵配置：code_entropy.*
+# =========================================
+
+# 项目基础信息。
+[project]
+# 项目标识，建议稳定不变，供报表和历史快照识别。
+id = "bpc-v2"
+# 项目展示名。
+name = "BPC_V2"
+# 当前项目语言，决定走哪套语言适配器。
+language = "java"
+
+# 关键业务流与扫描边界。
+[scope]
+# 关键业务流名称，供代码本体熵报告标识项目范围。
+critical_flows = ["local-dev-startup", "gateway-routing", "manage-service-startup", "operation-service-startup", "job-execution"]
+# 仓库内文档路径提示。
+[paths]
+architecture = ["docs/architecture", "docs/adr", "README.md", "readme/快速入门.md"]
+runbooks = ["docs/runbooks"]
+plans = ["docs/exec-plans", "docs/plans"]
+
+
+# =========================================
+# 代码本体熵总开关
+# exclude_dirs / include_extensions 直接影响扫描输入边界。
+# internal_package_prefixes 用来判断内部包与外部依赖。
+# =========================================
+[code_entropy]
+# 是否启用代码本体熵整条链路。
+enabled = true
+# 扫描时忽略的目录。
+exclude_dirs = [".git", ".idea", ".history", ".cursor", ".claude", ".codex-temp", ".graphify_python", "graphify-out", "target", "node_modules", "build", "dist", ".gradle", "__pycache__"]
+# 当前 Java 内置 analyzer 只支持 .java。
+include_extensions = [".java"]
+# 内部包名前缀，供依赖、行为和项目画像判断内部代码使用。
+internal_package_prefixes = ["com.iwhalecloud.dict"]
+
+# =========================================
+# 代码本体熵评分总配置
+# 所有五类熵都统一走 scoring_v1。
+# 这里的 v1 是“当前生产主口径”，不是旧版残留。
+# =========================================
+[code_entropy.scoring_v1]
+# 评分引擎总开关。
+enabled = true
+# schema 版本，控制配置结构是否兼容。
+schema_version = "code-entropy-scoring-v1-draft1"
+# 总评分口径版本；五类熵任一结构性变化都应同步评估是否升版。
+formula_version = "java-code-entropy-scorecard-v1-p8"
+# 当前已经迁入统一评分引擎的维度列表。
+migrated_dimensions = ["structure", "semantic", "behavior", "cognition", "style"]
+
+# 默认评分显示与聚合口径。
+[code_entropy.scoring_v1.defaults]
+# 内部计算分值范围。
+internal_scale = 100.0
+# 对外展示分值范围。
+display_scale = 100.0
+# 最终展示分保留小数位。
+display_round_digits = 1
+# 覆盖率显示保留位数。
+coverage_round_digits = 3
+# 分值方向：higher_is_worse 表示分越高风险越大。
+score_direction = "higher_is_worse"
+# 聚合方式：固定权重加权平均。
+aggregation = "fixed_weighted_average"
+
+# 五类熵维度都定义在 dimensions 下。
+[code_entropy.scoring_v1.dimensions]
+
+# =========================================
+# 结构熵
+# 关注目录承载、共享桶膨胀、头部目录集中和目录粒度。
+# 这是当前结构熵生产版主口径。
+# =========================================
+[code_entropy.scoring_v1.dimensions.structure]
+label = "结构熵"
+enabled = true
+# 结构熵单独的公式版本；只要结构熵规则/权重/原始输入语义变化，就应考虑升版。
+formula_version = "java-structure-scorecard-v1-p3"
+internal_scale = 100.0
+display_scale = 100.0
+display_round_digits = 1
+coverage_round_digits = 3
+score_direction = "higher_is_worse"
+aggregation = "fixed_weighted_average"
+
+[code_entropy.scoring_v1.dimensions.structure.level_bands]
+# 总分等级阈值：<excellent 为优秀，<good 为良好，<warning 为预警，其余为危险。
+excellent = 40.0
+good = 60.0
+warning = 80.0
+
+[code_entropy.scoring_v1.dimensions.structure.metrics]
+
+# metric 通用字段说明：
+# label: 中文名
+# category: general 通用规则，custom 项目定制规则
+# formula / formula_cn: 指标计算公式
+# meaning_cn: 指标治理含义
+# when_missing: 原始值缺失时如何处理，zero=按 0 处理，null=记为缺失
+[code_entropy.scoring_v1.dimensions.structure.metrics.shared_bucket_ratio]
+label = "共享承载目录占比"
+category = "custom"
+enabled = true
+formula = "div(facts.shared_bucket_total, facts.total_files, 0)"
+formula_cn = "shared_bucket_total / total_files"
+meaning_cn = "把人工配置的共享承载目录唯一文件总量，占全部 Java 文件的比例作为结构膨胀信号，避免 common/util 别名重叠时重复计数。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+[code_entropy.scoring_v1.dimensions.structure.metrics.max_dir_files_ratio]
+label = "最大目录文件占比"
+category = "general"
+enabled = true
+formula = "div(facts.max_dir_files, facts.total_files, 0)"
+formula_cn = "max_dir_files / total_files"
+meaning_cn = "避免直接用最大目录绝对文件数，改为看单目录吞掉全仓库文件的比例。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+[code_entropy.scoring_v1.dimensions.structure.metrics.oversized_dir_ratio]
+label = "超大目录数量占比"
+category = "general"
+enabled = true
+formula = "div(facts.oversized_dir_count, facts.total_dirs, 0)"
+formula_cn = "oversized_dir_count / total_dirs"
+meaning_cn = "超过超大目录阈值的目录数量，占全部目录的比例；用来识别不是单点，而是多处目录同时膨胀。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+[code_entropy.scoring_v1.dimensions.structure.metrics.top_n_dir_concentration]
+label = "前 N 大目录集中度"
+category = "general"
+enabled = true
+formula = "div(facts.top_n_dir_file_sum, facts.total_files, 0)"
+formula_cn = "top_n_dir_file_sum / total_files"
+meaning_cn = "把前 N 大目录合计吞掉的文件量，占全部文件的比例；用来识别代码是否被少数目录长期垄断。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+[code_entropy.scoring_v1.dimensions.structure.metrics.avg_files_per_dir]
+label = "平均目录文件数"
+category = "general"
+enabled = true
+formula = "div(facts.total_files, facts.total_dirs, 0)"
+formula_cn = "total_files / total_dirs"
+meaning_cn = "目录平均承载量，反映目录粒度是否长期失衡。"
+unit = "files_per_dir"
+round_digits = 2
+when_missing = "zero"
+
+# 结构熵规则 1：共享承载目录占比
+# 人话说明：
+# 看 common / shared / util 这类共享承载目录是否持续吸入业务代码。
+# 这类目录占比越高，说明业务边界越容易被抽空到“公共桶”里。
+# 这是结构熵里最直接的边界回流信号。
+[[code_entropy.scoring_v1.dimensions.structure.rules]]
+# rule 通用字段说明：
+# state=scored 表示参与正式评分
+# metric 指向上方定义的 metric
+# weight 为该规则在本维度中的权重预算
+# score_if_no_match 为未命中任何 band 时的分数
+# score_if_missing 为原始值缺失时的兜底分数
+id = "structure.shared_bucket_ratio"
+label = "共享承载目录占比"
+category = "custom"
+state = "scored"
+metric = "shared_bucket_ratio"
+weight = 29.412
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 60.0
+rule_cn = "共享目录占比越高，越说明业务边界持续向 common/util 聚集。"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+# band 从上到下按优先级匹配，命中首条即停止。
+# op/value 定义条件，score 为该档位风险分，status 为风险状态标签。
+op = ">="
+value = 0.2
+score = 100.0
+status = "danger"
+label_cn = "占比 >= 20%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.18
+score = 88.0
+status = "danger"
+label_cn = "占比 >= 18%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.16
+score = 76.0
+status = "warning"
+label_cn = "占比 >= 16%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.14
+score = 64.0
+status = "notice"
+label_cn = "占比 >= 14%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.12
+score = 52.0
+status = "notice"
+label_cn = "占比 >= 12%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.1
+score = 40.0
+status = "notice"
+label_cn = "占比 >= 10%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.08
+score = 30.0
+status = "notice"
+label_cn = "占比 >= 8%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.06
+score = 20.0
+status = "notice"
+label_cn = "占比 >= 6%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.04
+score = 10.0
+status = "notice"
+label_cn = "占比 >= 4%"
+
+# 结构熵规则 2：最大目录文件占比
+# 人话说明：
+# 看“最大的那个目录”到底吞掉了全仓库多少比例的文件。
+# 它不是简单惩罚大目录，而是识别单个目录是否已经变成事实上的隐式平台层。
+# 占比越高，单点结构膨胀越明显。
+[[code_entropy.scoring_v1.dimensions.structure.rules]]
+id = "structure.max_dir_files_ratio"
+label = "最大目录文件占比"
+category = "general"
+state = "scored"
+metric = "max_dir_files_ratio"
+weight = 17.647
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 50.0
+rule_cn = "单目录越大，说明局部边界越容易演化成事实上的隐式平台层。"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.03
+score = 100.0
+status = "danger"
+label_cn = "占比 >= 3%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.025
+score = 85.0
+status = "danger"
+label_cn = "占比 >= 2.5%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.02
+score = 70.0
+status = "warning"
+label_cn = "占比 >= 2%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.015
+score = 55.0
+status = "notice"
+label_cn = "占比 >= 1.5%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.0125
+score = 35.0
+status = "notice"
+label_cn = "占比 >= 1.25%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.01
+score = 20.0
+status = "notice"
+label_cn = "占比 >= 1%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.0075
+score = 10.0
+status = "notice"
+label_cn = "占比 >= 0.75%"
+
+# 结构熵规则 3：超大目录数量占比
+# 人话说明：
+# 看超过阈值的大目录是不是已经从个别点扩散成多个点。
+# 单点超大目录可能是历史包袱，多点超大目录通常意味着整体结构在系统性失衡。
+# 这条规则主要衡量问题“扩散面”。
+[[code_entropy.scoring_v1.dimensions.structure.rules]]
+id = "structure.oversized_dir_ratio"
+label = "超大目录数量占比"
+category = "general"
+state = "scored"
+metric = "oversized_dir_ratio"
+weight = 23.529
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 50.0
+rule_cn = "如果超过阈值的大目录不止一个，说明结构问题已经不是单点，而是多处边界同时失控。"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.12
+score = 100.0
+status = "danger"
+label_cn = "占比 >= 12%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.08
+score = 85.0
+status = "danger"
+label_cn = "占比 >= 8%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.05
+score = 70.0
+status = "warning"
+label_cn = "占比 >= 5%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.03
+score = 55.0
+status = "notice"
+label_cn = "占比 >= 3%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.02
+score = 40.0
+status = "notice"
+label_cn = "占比 >= 2%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.01
+score = 20.0
+status = "notice"
+label_cn = "占比 >= 1%"
+
+# 结构熵规则 4：前 N 大目录集中度
+# 人话说明：
+# 看头部几个最大目录合计吃掉了多少代码量。
+# 它不是盯单个目录，而是看代码是否越来越向少数高集中目录聚集。
+# 适合识别“头重脚轻”的目录分布。
+[[code_entropy.scoring_v1.dimensions.structure.rules]]
+id = "structure.top_n_dir_concentration"
+label = "前 N 大目录集中度"
+category = "general"
+state = "scored"
+metric = "top_n_dir_concentration"
+weight = 23.529
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 50.0
+rule_cn = "如果前 N 大目录长期吞掉过多文件，说明目录分布已经向少数高集中包收敛。"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.18
+score = 100.0
+status = "danger"
+label_cn = "占比 >= 18%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.15
+score = 85.0
+status = "danger"
+label_cn = "占比 >= 15%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.12
+score = 70.0
+status = "warning"
+label_cn = "占比 >= 12%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.09
+score = 55.0
+status = "notice"
+label_cn = "占比 >= 9%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.06
+score = 40.0
+status = "notice"
+label_cn = "占比 >= 6%"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 0.04
+score = 20.0
+status = "notice"
+label_cn = "占比 >= 4%"
+
+# 结构熵规则 5：平均目录文件数
+# 人话说明：
+# 看平均每个目录承载多少文件，给整个仓库的目录粒度一个背景判断。
+# 这条规则一般不单独主导风险，更像辅助信号。
+# 如果平均值持续升高，往往说明目录边界整体在变粗。
+[[code_entropy.scoring_v1.dimensions.structure.rules]]
+id = "structure.avg_files_per_dir"
+label = "平均目录文件数"
+category = "general"
+state = "scored"
+metric = "avg_files_per_dir"
+weight = 5.883
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 40.0
+rule_cn = "目录平均承载量越大，说明目录边界越粗，后续继续膨胀的风险越高。"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 30.0
+score = 100.0
+status = "danger"
+label_cn = "平均 >= 30"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 24.0
+score = 80.0
+status = "warning"
+label_cn = "平均 >= 24"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 18.0
+score = 60.0
+status = "notice"
+label_cn = "平均 >= 18"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 12.0
+score = 35.0
+status = "notice"
+label_cn = "平均 >= 12"
+
+[[code_entropy.scoring_v1.dimensions.structure.rules.bands]]
+op = ">="
+value = 8.0
+score = 15.0
+status = "notice"
+label_cn = "平均 >= 8"
+
+[code_entropy.scoring_v1.dimensions.semantic]
+# =========================================
+# 语义熵
+# 关注术语一致性、词典缺口、状态承载体重复与状态值散落。
+# glossary 与 term_gap 配置会显著影响本维度结果。
+# =========================================
+label = "语义熵"
+enabled = true
+formula_version = "java-semantic-scorecard-v1-p8"
+internal_scale = 100.0
+display_scale = 100.0
+display_round_digits = 1
+coverage_round_digits = 3
+score_direction = "higher_is_worse"
+aggregation = "fixed_weighted_average"
+
+[code_entropy.scoring_v1.dimensions.semantic.level_bands]
+excellent = 40.0
+good = 60.0
+warning = 80.0
+
+[code_entropy.scoring_v1.dimensions.semantic.metrics]
+
+[code_entropy.scoring_v1.dimensions.semantic.metrics.naming_inconsistency_ratio]
+label = "命名非标准占比"
+category = "custom"
+enabled = true
+formula = "div(facts.naming_nonstandard_hit_count, facts.naming_matched_hit_count, 0)"
+formula_cn = "naming_nonstandard_hit_count / naming_matched_hit_count"
+meaning_cn = "在所有命中 glossary 术语家族的类名里，统计非标准命名的命中占比；标准名不扣分，SaleOpp / Opportunity 这类变体命中会进入分子。"
+unit = "ratio"
+round_digits = 4
+when_missing = "null"
+
+[code_entropy.scoring_v1.dimensions.semantic.metrics.term_gap_ratio]
+label = "术语缺口比例"
+category = "custom"
+enabled = true
+formula = "div(facts.undefined_term_count, facts.total_terms, 0)"
+formula_cn = "undefined_term_count / total_terms"
+meaning_cn = "从高频唯一术语候选池中，计算未进入被扫描项目 glossary.md 标准词/别名 token 的比例；缺少项目 glossary.md 时按最高风险计分。"
+unit = "ratio"
+round_digits = 4
+when_missing = "null"
+
+[code_entropy.scoring_v1.dimensions.semantic.metrics.state_duplicate_ratio]
+label = "状态承载体重复比"
+category = "custom"
+enabled = true
+formula = "div(facts.duplicate_state_count, facts.state_count, 0)"
+formula_cn = "duplicate_state_count / state_count"
+meaning_cn = "把重复簇中除保留 1 个以外的冗余 Status/State 枚举或常量类数量，折算为全部状态承载体数量的比例。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+[code_entropy.scoring_v1.dimensions.semantic.metrics.state_value_scatter_ratio]
+label = "状态值散落比例"
+category = "custom"
+enabled = true
+formula = "div(facts.scattered_state_value_count, facts.state_value_reference_count, 0)"
+formula_cn = "scattered_state_value_count / state_value_reference_count"
+meaning_cn = "统计状态上下文中直接硬编码的状态字面量，占状态承载体定义项与硬编码引用总量的比例；用于定位状态值散落在业务代码中的语义熵。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+# 语义熵规则 1：命名非标准占比
+# 人话说明：
+# 看命中 glossary 的类名里，有多少没有按标准命名走。
+# 例如标准名配置为 Opp，那么 OppXXX 视为标准命中，
+# SaleOppXXX、OpportunityXXX 视为非标准命中。
+[[code_entropy.scoring_v1.dimensions.semantic.rules]]
+id = "semantic.naming_inconsistency_ratio"
+label = "命名非标准占比"
+category = "custom"
+state = "scored"
+metric = "naming_inconsistency_ratio"
+weight = 35.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 40.0
+rule_cn = "命中术语家族后，非标准命名出现得越多，阅读者越需要做额外语义映射。"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">="
+value = 0.5
+score = 100.0
+status = "danger"
+label_cn = "非标准命中占比 >= 50%"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">="
+value = 0.3
+score = 80.0
+status = "danger"
+label_cn = "非标准命中占比 >= 30%"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">="
+value = 0.15
+score = 60.0
+status = "warning"
+label_cn = "非标准命中占比 >= 15%"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">="
+value = 0.05
+score = 35.0
+status = "notice"
+label_cn = "非标准命中占比 >= 5%"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">="
+value = 0.01
+score = 15.0
+status = "notice"
+label_cn = "非标准命中占比 >= 1%"
+
+# 语义熵规则 2：术语缺口比例
+# 人话说明：
+# 看高频核心术语里，有多少还没进入 glossary 词典。
+# 它衡量的是“团队有没有把核心领域语言显式沉淀出来”，不是简单统计生词。
+# 缺口越大，说明共享语义基础越弱。
+[[code_entropy.scoring_v1.dimensions.semantic.rules]]
+id = "semantic.term_gap_ratio"
+label = "术语缺口比例"
+category = "custom"
+state = "scored"
+metric = "term_gap_ratio"
+weight = 45.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 45.0
+rule_cn = "核心命名越多落在词典外，团队共享语义就越弱。"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">="
+value = 0.85
+score = 100.0
+status = "danger"
+label_cn = "核心候选缺口 >= 85%"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">="
+value = 0.7
+score = 80.0
+status = "danger"
+label_cn = "核心候选缺口 >= 70%"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">="
+value = 0.55
+score = 60.0
+status = "warning"
+label_cn = "核心候选缺口 >= 55%"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">="
+value = 0.4
+score = 35.0
+status = "notice"
+label_cn = "核心候选缺口 >= 40%"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">="
+value = 0.25
+score = 15.0
+status = "notice"
+label_cn = "核心候选缺口 >= 25%"
+
+# 语义熵规则 3：状态承载体重复比
+# 人话说明：
+# 看状态语义是不是由多个 Status / State 承载体重复维护。
+# 例如多个 Status / State 枚举、常量类并行生长，容易导致协议和行为不一致。
+# 一旦这里开始重复，后续维护和联调成本通常会明显上升。
+[[code_entropy.scoring_v1.dimensions.semantic.rules]]
+id = "semantic.state_duplicate_ratio"
+label = "状态承载体重复比"
+category = "custom"
+state = "scored"
+metric = "state_duplicate_ratio"
+weight = 10.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 30.0
+rule_cn = "多个 Status/State 承载体维护相似状态集，会让协议和行为约定持续分叉。"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">="
+value = 0.3
+score = 100.0
+status = "danger"
+label_cn = "重复 >= 30%"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">="
+value = 0.15
+score = 70.0
+status = "warning"
+label_cn = "重复 >= 15%"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">"
+value = 0.0
+score = 35.0
+status = "notice"
+label_cn = "存在重复"
+
+# 语义熵规则 4：状态值散落比例
+# 人话说明：
+# 看状态值是不是直接散落在 service/controller/mapper 判断里。
+# 硬编码状态值越多，越说明状态语义没有从统一枚举或常量源引用。
+[[code_entropy.scoring_v1.dimensions.semantic.rules]]
+id = "semantic.state_value_scatter_ratio"
+label = "状态值散落比例"
+category = "custom"
+state = "scored"
+metric = "state_value_scatter_ratio"
+weight = 10.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 25.0
+rule_cn = "状态值散落在业务代码中，会让状态语义难以统一治理和回查。"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">="
+value = 0.3
+score = 100.0
+status = "danger"
+label_cn = "存在散落"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">="
+value = 0.15
+score = 70.0
+status = "warning"
+label_cn = "存在散落"
+
+[[code_entropy.scoring_v1.dimensions.semantic.rules.bands]]
+op = ">"
+value = 0.0
+score = 35.0
+status = "notice"
+label_cn = "存在散落"
+
+[code_entropy.scoring_v1.dimensions.behavior]
+# =========================================
+# 行为熵
+# 关注错误处理、返回契约、异常类型扩散。
+# 与 controller 检测、返回包装识别配置强相关。
+# =========================================
+label = "行为熵"
+enabled = true
+formula_version = "java-behavior-scorecard-v2-light-ast"
+internal_scale = 100.0
+display_scale = 100.0
+display_round_digits = 1
+coverage_round_digits = 3
+score_direction = "higher_is_worse"
+aggregation = "fixed_weighted_average"
+
+[code_entropy.scoring_v1.dimensions.behavior.level_bands]
+excellent = 40.0
+good = 60.0
+warning = 80.0
+
+[code_entropy.scoring_v1.dimensions.behavior.metrics]
+
+[code_entropy.scoring_v1.dimensions.behavior.metrics.failure_strategy_split_ratio]
+label = "失败处理策略分裂比例"
+category = "general"
+enabled = true
+formula = "one_minus(div(facts.failure_strategy_dominant_count, facts.failure_strategy_total_count, 1))"
+formula_cn = "1 - failure_strategy_dominant_count / failure_strategy_total_count"
+meaning_cn = "按 catch 块把失败处理归为重新抛异常、包装错误返回、返回 null、吞异常等策略；主导策略占比越低，失败路径越分裂。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+[code_entropy.scoring_v1.dimensions.behavior.metrics.swallowed_exception_ratio]
+label = "吞异常比例"
+category = "general"
+enabled = true
+formula = "div(facts.swallowed_catch_count, facts.catch_block_count, 0)"
+formula_cn = "swallowed_catch_count / catch_block_count"
+meaning_cn = "统计 catch 块中空处理、只打日志或没有 throw/return 失败处理的比例。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+[code_entropy.scoring_v1.dimensions.behavior.metrics.error_return_contract_mix_ratio]
+label = "返回错误契约混用比例"
+category = "custom"
+enabled = true
+formula = "one_minus(div(facts.error_return_contract_dominant_count, facts.error_return_contract_total_count, 1))"
+formula_cn = "1 - error_return_contract_dominant_count / error_return_contract_total_count"
+meaning_cn = "只统计 Controller/API 层失败返回契约，判断包装错误、return null、错误码、字符串、布尔值、直接抛异常是否混用。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+[code_entropy.scoring_v1.dimensions.behavior.metrics.generic_exception_throw_ratio]
+label = "泛化异常抛出比例"
+category = "general"
+enabled = true
+formula = "div(facts.generic_exception_throw_count, facts.exception_throw_count, 0)"
+formula_cn = "generic_exception_throw_count / exception_throw_count"
+meaning_cn = "统计 throw new Exception、RuntimeException、Throwable 这类缺少业务语义的泛化异常占比。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+[code_entropy.scoring_v1.dimensions.behavior.metrics.business_exception_convergence_gap]
+label = "业务异常未收敛比例"
+category = "custom"
+enabled = true
+formula = "div(facts.nonstandard_business_exception_throw_count, facts.business_exception_throw_count, 0)"
+formula_cn = "nonstandard_business_exception_throw_count / business_exception_throw_count"
+meaning_cn = "把业务异常与配置的标准业务异常基类对齐；非标准业务异常占比越高，说明异常语义越容易局部生长。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules]]
+id = "behavior.failure_strategy_split"
+label = "失败处理策略分裂"
+category = "general"
+state = "scored"
+metric = "failure_strategy_split_ratio"
+weight = 30.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 50.0
+rule_cn = "catch 后的失败处理策略越分裂，调用链越难预测。"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">="
+value = 0.7
+score = 100.0
+status = "danger"
+label_cn = "分裂比例 >= 70%"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">="
+value = 0.5
+score = 75.0
+status = "warning"
+label_cn = "分裂比例 >= 50%"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">="
+value = 0.3
+score = 50.0
+status = "warning"
+label_cn = "分裂比例 >= 30%"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">"
+value = 0.0
+score = 25.0
+status = "notice"
+label_cn = "存在多策略分裂"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules]]
+id = "behavior.swallowed_exception"
+label = "吞异常比例"
+category = "general"
+state = "scored"
+metric = "swallowed_exception_ratio"
+weight = 25.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 50.0
+rule_cn = "catch 中空处理、只打日志或没有失败处理，会直接放大排障成本。"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">="
+value = 0.2
+score = 100.0
+status = "danger"
+label_cn = "吞异常 >= 20%"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">="
+value = 0.1
+score = 75.0
+status = "warning"
+label_cn = "吞异常 >= 10%"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">="
+value = 0.05
+score = 50.0
+status = "warning"
+label_cn = "吞异常 >= 5%"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">"
+value = 0.0
+score = 25.0
+status = "notice"
+label_cn = "存在吞异常"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules]]
+id = "behavior.error_return_contract_mix"
+label = "返回错误契约混用"
+category = "custom"
+state = "scored"
+metric = "error_return_contract_mix_ratio"
+weight = 20.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 50.0
+rule_cn = "Controller 失败返回契约越混杂，调用方越难形成稳定处理逻辑。"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">="
+value = 0.7
+score = 100.0
+status = "danger"
+label_cn = "混用比例 >= 70%"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">="
+value = 0.5
+score = 75.0
+status = "warning"
+label_cn = "混用比例 >= 50%"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">="
+value = 0.3
+score = 50.0
+status = "warning"
+label_cn = "混用比例 >= 30%"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">"
+value = 0.0
+score = 25.0
+status = "notice"
+label_cn = "存在错误契约混用"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules]]
+id = "behavior.generic_exception_abuse"
+label = "泛化异常滥用"
+category = "general"
+state = "scored"
+metric = "generic_exception_throw_ratio"
+weight = 15.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 50.0
+rule_cn = "直接抛 RuntimeException/Exception/Throwable 会削弱异常语义。"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">="
+value = 0.2
+score = 100.0
+status = "danger"
+label_cn = "泛化异常 >= 20%"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">="
+value = 0.1
+score = 75.0
+status = "warning"
+label_cn = "泛化异常 >= 10%"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">="
+value = 0.05
+score = 50.0
+status = "warning"
+label_cn = "泛化异常 >= 5%"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">"
+value = 0.0
+score = 25.0
+status = "notice"
+label_cn = "存在泛化异常"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules]]
+id = "behavior.business_exception_convergence"
+label = "业务异常未收敛"
+category = "custom"
+state = "scored"
+metric = "business_exception_convergence_gap"
+weight = 10.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 50.0
+rule_cn = "业务异常没有收敛到统一基类时，错误语义会在局部各自生长。"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">="
+value = 0.7
+score = 100.0
+status = "danger"
+label_cn = "未收敛 >= 70%"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">="
+value = 0.5
+score = 75.0
+status = "warning"
+label_cn = "未收敛 >= 50%"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">="
+value = 0.3
+score = 50.0
+status = "warning"
+label_cn = "未收敛 >= 30%"
+
+[[code_entropy.scoring_v1.dimensions.behavior.rules.bands]]
+op = ">"
+value = 0.0
+score = 25.0
+status = "notice"
+label_cn = "存在非标准业务异常"
+
+[code_entropy.scoring_v1.dimensions.cognition]
+# =========================================
+# 认知熵
+# 关注技术债、知识缺口、复杂方法与大文件负担。
+# 代表团队理解和维护代码的心智负担。
+# =========================================
+label = "认知熵"
+enabled = true
+formula_version = "java-cognition-scorecard-v3"
+internal_scale = 100.0
+display_scale = 100.0
+display_round_digits = 1
+coverage_round_digits = 3
+score_direction = "higher_is_worse"
+aggregation = "fixed_weighted_average"
+
+[code_entropy.scoring_v1.dimensions.cognition.level_bands]
+excellent = 40.0
+good = 60.0
+warning = 80.0
+
+[code_entropy.scoring_v1.dimensions.cognition.metrics]
+
+[code_entropy.scoring_v1.dimensions.cognition.metrics.todo_density_per_k_files]
+label = "每千文件债务标记数"
+category = "general"
+enabled = true
+formula = "div(facts.todo_count * 1000, facts.total_files, 0)"
+formula_cn = "(todo_count * 1000) / total_files"
+meaning_cn = "把 TODO/FIXME/HACK 从绝对值改为密度，更适合跨周期比较。"
+unit = "count_per_k_files"
+round_digits = 3
+when_missing = "zero"
+
+[code_entropy.scoring_v1.dimensions.cognition.metrics.unowned_debt_ratio]
+label = "未归属债务比例"
+category = "general"
+enabled = true
+formula = "div(facts.unowned_todo_count, facts.todo_count, 0)"
+formula_cn = "unowned_todo_count / todo_count"
+meaning_cn = "已经标出来的技术债里，没有责任人的比例；值越高越容易长期滞留。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+[code_entropy.scoring_v1.dimensions.cognition.metrics.public_knowledge_gap_ratio]
+label = "公共知识缺口比例"
+category = "custom"
+enabled = true
+formula = "one_minus(div(facts.knowledge_documented_count, facts.knowledge_target_count, 1))"
+formula_cn = "1 - (knowledge_documented_count / knowledge_target_count)"
+meaning_cn = "公共类和公共方法缺少 JavaDoc 的比例；值越高越依赖口头知识。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+[code_entropy.scoring_v1.dimensions.cognition.metrics.complex_method_ratio]
+label = "复杂方法比例"
+category = "general"
+enabled = true
+formula = "div(facts.complex_method_count, facts.total_methods, 0)"
+formula_cn = "complex_method_count / total_methods"
+meaning_cn = "方法体过长、分支过多或嵌套过深的方法占比；值越高越难读、难改、难测。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+[code_entropy.scoring_v1.dimensions.cognition.metrics.large_file_class_burden_ratio]
+label = "大文件/大类负担比例"
+category = "general"
+enabled = true
+formula = "div(facts.large_file_class_count, facts.total_files, 0)"
+formula_cn = "large_file_class_count / total_files"
+meaning_cn = "物理总行数超过大文件阈值的 Java 文件占比；值越高说明阅读入口越沉重。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+[code_entropy.scoring_v1.dimensions.cognition.metrics.project_doc_gap_ratio]
+label = "项目文档缺口比例"
+category = "general"
+enabled = true
+formula = "one_minus(facts.project_doc_quality_score)"
+formula_cn = "1 - project_doc_quality_score"
+meaning_cn = "README、docs/readme/wiki 等项目说明文档的可用度缺口；值越高说明新人理解项目越依赖口头传递。"
+unit = "ratio"
+round_digits = 4
+when_missing = "zero"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules]]
+id = "cognition.todo_density"
+label = "债务标记密度"
+category = "general"
+state = "scored"
+metric = "todo_density_per_k_files"
+weight = 20.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 45.0
+rule_cn = "先看债务标记密度，而不是直接用 TODO 总量。"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 20.0
+score = 90.0
+status = "danger"
+label_cn = "每千文件 >= 20"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 12.0
+score = 70.0
+status = "warning"
+label_cn = "每千文件 >= 12"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 6.0
+score = 45.0
+status = "notice"
+label_cn = "每千文件 >= 6"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules]]
+id = "cognition.unowned_debt_ratio"
+label = "未归属债务比例"
+category = "general"
+state = "scored"
+metric = "unowned_debt_ratio"
+weight = 15.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 40.0
+rule_cn = "债务没有责任人，通常意味着问题会长期滞留。"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.7
+score = 100.0
+status = "danger"
+label_cn = "未归属 >= 70%"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.4
+score = 70.0
+status = "warning"
+label_cn = "未归属 >= 40%"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.2
+score = 35.0
+status = "notice"
+label_cn = "未归属 >= 20%"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules]]
+id = "cognition.public_knowledge_gap_ratio"
+label = "公共知识缺口比例"
+category = "custom"
+state = "scored"
+metric = "public_knowledge_gap_ratio"
+weight = 20.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 35.0
+rule_cn = "JavaDoc 缺口越大，认知成本越依赖熟悉上下文的人。"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.5
+score = 100.0
+status = "danger"
+label_cn = "缺口 >= 50%"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.35
+score = 75.0
+status = "warning"
+label_cn = "缺口 >= 35%"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.2
+score = 45.0
+status = "notice"
+label_cn = "缺口 >= 20%"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules]]
+id = "cognition.complex_method_ratio"
+label = "复杂方法比例"
+category = "general"
+state = "scored"
+metric = "complex_method_ratio"
+weight = 25.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 25.0
+rule_cn = "复杂方法比例越高，说明局部业务逻辑越难理解和安全修改。"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.08
+score = 100.0
+status = "danger"
+label_cn = "复杂方法占比 >= 8%"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.05
+score = 80.0
+status = "danger"
+label_cn = "复杂方法占比 >= 5%"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.03
+score = 55.0
+status = "warning"
+label_cn = "复杂方法占比 >= 3%"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.015
+score = 30.0
+status = "notice"
+label_cn = "复杂方法占比 >= 1.5%"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules]]
+id = "cognition.large_file_class_burden_ratio"
+label = "大文件/大类负担比例"
+category = "general"
+state = "scored"
+metric = "large_file_class_burden_ratio"
+weight = 10.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 35.0
+rule_cn = "大文件/大类负担越高，说明阅读入口和职责边界越沉重。"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.12
+score = 100.0
+status = "danger"
+label_cn = "大文件占比 >= 12%"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.08
+score = 75.0
+status = "warning"
+label_cn = "大文件占比 >= 8%"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.04
+score = 45.0
+status = "notice"
+label_cn = "大文件占比 >= 4%"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules]]
+id = "cognition.project_doc_gap_ratio"
+label = "项目文档缺口比例"
+category = "general"
+state = "scored"
+metric = "project_doc_gap_ratio"
+weight = 10.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 60.0
+rule_cn = "项目文档越缺失，新人理解项目、启动项目和定位配置越依赖口头经验。"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.8
+score = 100.0
+status = "danger"
+label_cn = "文档缺口 >= 80%"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.5
+score = 75.0
+status = "warning"
+label_cn = "文档缺口 >= 50%"
+
+[[code_entropy.scoring_v1.dimensions.cognition.rules.bands]]
+op = ">="
+value = 0.25
+score = 45.0
+status = "notice"
+label_cn = "文档缺口 >= 25%"
+
+[code_entropy.scoring_v1.dimensions.style]
+# =========================================
+# 风格熵
+# 关注 Checkstyle 扫描出的格式、命名、导入、注解声明、编码坏味道、
+# 复杂度与规模六类问题。
+# 本维度反映代码文本层的规范性和可维护性。
+# =========================================
+label = "风格熵"
+enabled = true
+formula_version = "java-style-checkstyle-scorecard-v1"
+internal_scale = 100.0
+display_scale = 100.0
+display_round_digits = 1
+coverage_round_digits = 3
+score_direction = "higher_is_worse"
+aggregation = "fixed_weighted_average"
+
+[code_entropy.scoring_v1.dimensions.style.level_bands]
+excellent = 40.0
+good = 60.0
+warning = 80.0
+
+[code_entropy.scoring_v1.dimensions.style.metrics]
+
+[code_entropy.scoring_v1.dimensions.style.metrics.style_formatting_density]
+label = "格式排版问题密度"
+category = "general"
+enabled = true
+formula = "div(facts.style_formatting_violation_count, facts.java_kloc, 0)"
+formula_cn = "格式排版问题数 / Java 千行代码"
+meaning_cn = "统计缩进、空白、换行、括号、空块等排版类 Checkstyle 问题在每千行 Java 代码中的密度。"
+unit = "issues_per_kloc"
+round_digits = 2
+when_missing = "null"
+
+[code_entropy.scoring_v1.dimensions.style.metrics.style_naming_density]
+label = "命名规范问题密度"
+category = "general"
+enabled = true
+formula = "div(facts.style_naming_violation_count, facts.java_kloc, 0)"
+formula_cn = "命名规范问题数 / Java 千行代码"
+meaning_cn = "统计类名、方法名、包名、泛型参数、静态变量等命名类 Checkstyle 问题在每千行 Java 代码中的密度。"
+unit = "issues_per_kloc"
+round_digits = 2
+when_missing = "null"
+
+[code_entropy.scoring_v1.dimensions.style.metrics.style_import_density]
+label = "导入规范问题密度"
+category = "general"
+enabled = true
+formula = "div(facts.style_import_violation_count, facts.java_kloc, 0)"
+formula_cn = "导入规范问题数 / Java 千行代码"
+meaning_cn = "统计星号导入、非法导入、冗余导入、未使用导入等导入类 Checkstyle 问题密度。"
+unit = "issues_per_kloc"
+round_digits = 2
+when_missing = "null"
+
+[code_entropy.scoring_v1.dimensions.style.metrics.style_declaration_density]
+label = "注解与声明规范问题密度"
+category = "general"
+enabled = true
+formula = "div(facts.style_declaration_violation_count, facts.java_kloc, 0)"
+formula_cn = "注解与声明规范问题数 / Java 千行代码"
+meaning_cn = "统计注解位置、Override、包注解、修饰符顺序、顶层类数量等声明类 Checkstyle 问题密度。"
+unit = "issues_per_kloc"
+round_digits = 2
+when_missing = "null"
+
+[code_entropy.scoring_v1.dimensions.style.metrics.style_code_smell_density]
+label = "编码坏味道问题密度"
+category = "general"
+enabled = true
+formula = "div(facts.style_code_smell_violation_count, facts.java_kloc, 0)"
+formula_cn = "编码坏味道问题数 / Java 千行代码"
+meaning_cn = "统计空 catch、System.out、printStackTrace、字符串比较、equals/hashCode、控制变量修改等坏味道问题密度。"
+unit = "issues_per_kloc"
+round_digits = 2
+when_missing = "null"
+
+[code_entropy.scoring_v1.dimensions.style.metrics.style_complexity_density]
+label = "复杂度与规模问题密度"
+category = "general"
+enabled = true
+formula = "div(facts.style_complexity_violation_count, facts.java_kloc, 0)"
+formula_cn = "复杂度与规模问题数 / Java 千行代码"
+meaning_cn = "统计文件长度、嵌套深度、布尔表达式复杂度、参数数量等复杂度与规模类 Checkstyle 问题密度。"
+unit = "issues_per_kloc"
+round_digits = 2
+when_missing = "null"
+
+# 风格熵规则 1：格式排版问题密度
+[[code_entropy.scoring_v1.dimensions.style.rules]]
+id = "style.formatting_density"
+label = "格式排版问题"
+category = "general"
+state = "scored"
+metric = "style_formatting_density"
+weight = 15.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 40.0
+rule_cn = "缩进、空白、换行、括号等格式问题越密集，说明项目 formatter 或团队排版约定没有稳定落地。"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 2.0
+score = 100.0
+status = "danger"
+label_cn = "每千行 >= 2 处"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 1.0
+score = 75.0
+status = "warning"
+label_cn = "每千行 >= 1 处"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 0.4
+score = 50.0
+status = "notice"
+label_cn = "每千行 >= 0.4 处"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 0.1
+score = 25.0
+status = "notice"
+label_cn = "每千行 >= 0.1 处"
+
+# 风格熵规则 2：命名规范问题密度
+[[code_entropy.scoring_v1.dimensions.style.rules]]
+id = "style.naming_density"
+label = "命名规范问题"
+category = "general"
+state = "scored"
+metric = "style_naming_density"
+weight = 20.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 40.0
+rule_cn = "类名、方法名、包名等命名越不规范，阅读者越难通过名字建立稳定预期。"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 1.0
+score = 100.0
+status = "danger"
+label_cn = "每千行 >= 1 处"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 0.3
+score = 70.0
+status = "warning"
+label_cn = "每千行 >= 0.3 处"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 0.03
+score = 40.0
+status = "notice"
+label_cn = "每千行 >= 0.03 处"
+
+# 风格熵规则 3：导入规范问题密度
+[[code_entropy.scoring_v1.dimensions.style.rules]]
+id = "style.import_density"
+label = "导入规范问题"
+category = "general"
+state = "scored"
+metric = "style_import_density"
+weight = 10.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 30.0
+rule_cn = "导入问题越多，说明依赖引用和文件清洁度越差，会增加无效依赖和 review 噪音。"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 1.0
+score = 100.0
+status = "danger"
+label_cn = "每千行 >= 1 处"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 0.4
+score = 70.0
+status = "warning"
+label_cn = "每千行 >= 0.4 处"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 0.1
+score = 40.0
+status = "notice"
+label_cn = "每千行 >= 0.1 处"
+
+# 风格熵规则 4：注解与声明规范问题密度
+[[code_entropy.scoring_v1.dimensions.style.rules]]
+id = "style.declaration_density"
+label = "注解与声明规范问题"
+category = "general"
+state = "scored"
+metric = "style_declaration_density"
+weight = 10.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 30.0
+rule_cn = "注解、Override、修饰符顺序和顶层类声明越混乱，代码结构入口越不稳定。"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 1.0
+score = 100.0
+status = "danger"
+label_cn = "每千行 >= 1 处"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 0.4
+score = 70.0
+status = "warning"
+label_cn = "每千行 >= 0.4 处"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 0.05
+score = 40.0
+status = "notice"
+label_cn = "每千行 >= 0.05 处"
+
+# 风格熵规则 5：编码坏味道问题密度
+[[code_entropy.scoring_v1.dimensions.style.rules]]
+id = "style.code_smell_density"
+label = "编码坏味道问题"
+category = "general"
+state = "scored"
+metric = "style_code_smell_density"
+weight = 30.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 50.0
+rule_cn = "空 catch、直接打印、错误 equals、控制变量修改等坏味道越多，说明代码行为和可维护性风险越高。"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 2.0
+score = 100.0
+status = "danger"
+label_cn = "每千行 >= 2 处"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 1.0
+score = 75.0
+status = "warning"
+label_cn = "每千行 >= 1 处"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 0.3
+score = 45.0
+status = "notice"
+label_cn = "每千行 >= 0.3 处"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 0.1
+score = 20.0
+status = "notice"
+label_cn = "每千行 >= 0.1 处"
+
+# 风格熵规则 6：复杂度与规模问题密度
+[[code_entropy.scoring_v1.dimensions.style.rules]]
+id = "style.complexity_density"
+label = "复杂度与规模问题"
+category = "general"
+state = "scored"
+metric = "style_complexity_density"
+weight = 15.0
+direction = "higher_is_worse"
+score_if_no_match = 0.0
+score_if_missing = 40.0
+rule_cn = "文件过长、嵌套过深、参数过多、布尔表达式过复杂，都会提高理解和修改成本。"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 0.5
+score = 100.0
+status = "danger"
+label_cn = "每千行 >= 0.5 处"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 0.2
+score = 75.0
+status = "warning"
+label_cn = "每千行 >= 0.2 处"
+
+[[code_entropy.scoring_v1.dimensions.style.rules.bands]]
+op = ">="
+value = 0.05
+score = 45.0
+status = "notice"
+label_cn = "每千行 >= 0.05 处"
+
+[code_entropy.weights]
+# 五类熵汇总为总熵时的维度权重。
+# 总和通常应为 1.0。
+structure_entropy = 0.3
+semantic_entropy = 0.25
+behavior_entropy = 0.2
+cognition_entropy = 0.15
+style_entropy = 0.1
+
+[code_entropy.score_models]
+
+[code_entropy.score_models.health]
+# 健康度是总熵的派生指标，不是独立采集值。
+# invert_scores=true 表示“总熵越高越差”会被翻转为“健康度越高越好”。
+formula_version = "total-entropy-derived-health-v1"
+aggregation = "weighted_average"
+invert_scores = true
+entropy_score_scale = 100.0
+output_scale = 100.0
+normalize_weights = true
+round_digits = 1
+
+
+[code_entropy.thresholds]
+# 旧链路和部分明细展示仍会读取这些阈值。
+# 这里主要是辅助阈值，不是五类熵主评分卡。
+health_score_excellent = 60
+health_score_good = 40
+health_score_warning = 20
+health_score_danger = 0
+common_files_warning = 300
+common_files_danger = 400
+util_files_warning = 50
+naming_variance_warning = 3
+naming_variance_danger = 5
+todo_warning = 30
+todo_danger = 50
+missing_javadoc_warning = 0.3
+missing_javadoc_danger = 0.5
+cyclomatic_complexity_warning = 10
+cyclomatic_complexity_danger = 20
+method_lines_warning = 50
+method_lines_danger = 100
+class_lines_warning = 500
+class_lines_danger = 1000
+
+[code_entropy.glossary]
+# 兼容词典示例：
+# standard 为标准词，variants 为允许的别名/历史命名。
+# match_position 用于声明这组命名家族按什么位置匹配：
+# any=名字任意位置命中；prefix=只匹配前缀家族；suffix=只匹配后缀家族。
+# used_by 用于声明词条参与哪些语义规则：
+# naming=命名非标准占比，term_gap=术语缺口，naming,term_gap=两者都参与。
+# 对项目 glossary.md 来说，只有 standard + description 且没有 variants 的词条默认只参与 term_gap。
+# 例如商机根词治理可用 standard="Opp" + match_position="prefix"；
+# 任务执行后缀治理可用 standard="Job" + variants=["Task","Work"] + match_position="suffix"。
+# 当前 CLI 扫描任意 Java 项目时，语义熵优先使用被扫描项目内的 glossary.md，
+# 这里保留为历史兼容示例，不作为术语缺口的生产对比源。
+
+[code_entropy.glossary.opportunity]
+standard = "Opp"
+variants = ["SaleOpp", "Opportunity"]
+match_position = "prefix"
+
+[code_entropy.glossary.job_family]
+standard = "Job"
+variants = ["Jobs", "Task", "Work"]
+match_position = "suffix"
+
+[code_entropy.java]
+# Java 语言适配专用配置都放在这里。
+
+[code_entropy.java.strategy]
+# strategy 定义“按什么口径理解 Java 项目”。
+
+[code_entropy.java.strategy.controller]
+# controller 检测策略。
+# 这会影响行为熵扫描范围，以及项目画像是否被识别为 web 项目。
+file_name_suffixes = ["Controller"]
+class_annotations = ["RestController", "Controller"]
+package_keywords = ["controller", "api"]
+detect_by_filename = true
+detect_by_annotation = true
+detect_by_package = true
+
+[code_entropy.java.strategy.return_formats]
+# 返回格式识别策略。
+# scan_scope=controllers 表示默认只统计 controller 返回；all_java 表示全仓 Java。
+scan_scope = "controllers"
+wrapper_types = ["ResultVO", "ResponseEntity", "CommonResult", "R"]
+map_types = ["Map", "HashMap", "LinkedHashMap"]
+collection_types = ["List", "ArrayList", "Set", "HashSet"]
+count_scalar_literals = true
+count_null_returns = true
+count_named_references = true
+
+[code_entropy.java.strategy.project]
+# 项目类型判定策略。
+# kind=auto 表示自动识别 spring_web / batch_job / plain_java / library。
+# degrade_without_controllers=true 表示没有 controller 时允许自动降级，不直接报废行为熵。
+kind = "auto"
+degrade_without_controllers = true
+controllerless_return_scope = "skip"
+web_class_annotations = ["RestController", "Controller", "RequestMapping", "GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping"]
+web_package_keywords = ["controller", "api", "web"]
+batch_class_annotations = ["Scheduled", "KafkaListener", "RabbitListener", "JmsListener"]
+batch_package_keywords = ["job", "task", "batch", "schedule", "scheduler", "listener", "consumer"]
+batch_class_name_keywords = ["Job", "Task", "Worker", "Listener", "Consumer", "Scheduler"]
+
+[code_entropy.java.strategy.project.discovery]
+# 项目画像抽样文件数上限；越大越准，但越慢。
+sample_limit = 400
+
+[code_entropy.java.strategy.javadoc]
+# JavaDoc 检测口径。
+# public_api 是常用生产口径：主要看公共 API 的可读性。
+scope = "public_api"
+type_visibilities = ["public"]
+method_visibilities = ["public"]
+type_kinds = ["class", "interface", "enum"]
+include_classes = true
+include_methods = true
+exclude_overrides = true
+class_lookback_chars = 500
+method_lookback_chars = 300
+
+[code_entropy.java.strategy.glossary]
+# 语义词典使用策略。
+# configured_only 表示只信任显式配置的词典，不自动收编新词。
+mode = "configured_only"
+# 缺少 glossary 时的运行策略。
+# term_gap_only：只让“术语缺口”继续计分，“命名概念冲突”标记为待配置。
+# all_pending：依赖 glossary 的规则都不计分，只保留状态类规则。
+# all_scored：兼容模式，允许依赖 glossary 的规则继续给分；生产默认不要改。
+missing_glossary_policy = "term_gap_only"
+min_term_length = 4
+# variant_threshold 为历史兼容字段，当前“命名非标准占比”主评分不再直接使用它。
+# 现行口径只看标准命名与非标准命名的实际命中占比。
+variant_threshold = 1
+ignore_terms = ["Controller", "Service", "Repository", "Mapper", "Request", "Response", "DTO", "VO", "Entity", "Config", "Util"]
+
+[code_entropy.java.strategy.glossary.term_gap]
+# term gap 候选词提取策略。
+# 这里控制“哪些词会进入术语缺口候选池”。
+candidate_mode = "top_unique_terms"
+min_occurrences = 10
+max_candidate_terms = 50
+exclude_terms = ["Info", "Impl", "Data", "Field", "Enum", "Common", "Base", "Result", "Support", "List", "Item", "Page", "File", "Record", "Detail", "Rule", "Check", "Apply", "Label", "Node", "Mark", "Plan"]
+
+[code_entropy.java.detail_export]
+# detail_export 决定详情页和明细 JSON 保留多少样本。
+
+[code_entropy.java.detail_export.limits]
+# 这里只影响导出明细量，不影响评分本身。
+todo_top_files = 20
+todo_items = 500
+knowledge_gap_items = 500
+todo_preview_items = 50
+todo_content_chars = 100
+large_files = 100
+large_methods = 200
+directory_top = 50
+directory_sample_files = 20
+shared_common_files = 500
+shared_util_files = 300
+duplicate_classes = 100
+duplicate_class_files = 20
+glossary_terms = 100
+term_variant_preview = 20
+exception_types = 100
+exception_files = 20
+top_large_directories = 10
+preferred_wrapper_preview = 3
+behavior_top_error_patterns = 5
+behavior_top_return_formats = 5
+behavior_top_exception_types = 10
+semantic_undefined_terms = 50
+semantic_top_inconsistent = 10
+semantic_variant_samples = 5
+cycle_groups = 20
+cycle_edges = 30
+cycle_classes = 50
+
+[code_entropy.java.detectors]
+# detectors 定义五类熵原始事实怎么被识别出来。
+
+[code_entropy.java.detectors.structure]
+
+[code_entropy.java.detectors.structure.shared_buckets]
+# 结构熵共享桶识别口径。
+# 这是项目定制强相关区域，换项目时最容易需要人工校准。
+# match_mode=segment 表示按路径段精确匹配；contains 表示只要路径包含关键字就算。
+match_mode = "segment"
+# shared_aliases / utility_aliases：按目录段名称识别，例如命中 common、utils 这类包段。
+shared_aliases = ["common", "commons"]
+utility_aliases = ["util", "utils"]
+# shared_path_prefixes / utility_path_prefixes：按相对项目根目录的路径前缀强约束识别。
+# 适合你已经明确知道“哪些包路径就是公共承载层/工具层”的项目。
+# 例子：["src/main/java/com/company/common", "src/main/java/com/company/utils"]
+# 一旦这里配置了前缀，structure.py 会优先按前缀识别；只有留空时才回退到 aliases。
+# 当前这版先只收 BPC 仓库里“明显是 dedicated common/util 根包”的路径，
+# 不把 dto/.../common、controller/.../common 这类上下文子包混进共享桶。
+shared_path_prefixes = [
+  "bpc-base/bpc-base-common/src/main/java/com/iwhalecloud/dict/bpc/base/common",
+]
+utility_path_prefixes = [
+  "bpc-base/bpc-base-client/src/main/java/com/iwhalecloud/dict/bpc/base/client/bcmc/util",
+  "bpc-base/bpc-base-datasource/src/main/java/com/iwhalecloud/dict/bpc/base/datasource/utils",
+  "bpc-base/bpc-base-web/src/main/java/com/iwhalecloud/dict/bpc/base/web/utils",
+  "bpc-gateway/bpc-gateway-server/src/main/java/com/iwhalecloud/dict/bpc/gateway/util",
+  "bpc-group/bpc-group-prov-server/src/main/java/com/iwhalecloud/dict/bpc/group/prov/utils",
+  "bpc-manage/bpc-manage-boot/src/main/java/com/iwhalecloud/bss/cele/util",
+  "bpc-manage/bpc-manage-client/src/main/java/com/iwhalecloud/dict/bpc/util",
+  "bpc-manage/bpc-manage-project-server/src/main/java/com/iwhalecloud/dict/bpc/manage/project/utils",
+  "bpc-manage-bpm/bpc-manage-bpm-boot/src/main/java/com/iwhalecloud/bss/cele/util",
+  "bpc-manage-bpm/bpc-manage-bpm-client/src/main/java/com/iwhalecloud/dict/bpm/manage/client/util",
+  "bpc-manage-bpm/bpc-manage-bpm-project-server/src/main/java/com/iwhalecloud/dict/bpm/manage/project/utils",
+  "bpc-operation/bpc-operation-client/src/main/java/com/iwhalecloud/dict/bpc/operation/client/utils",
+  "bpc-operation/bpc-operation-data-server/src/main/java/com/iwhalecloud/dict/bpc/operation/util",
+]
+
+[code_entropy.java.detectors.structure.directory_distribution]
+# 目录分布检测参数。
+# oversized_dir_file_threshold: 一个目录有多少文件才算“超大目录”
+# top_n_concentration_count: 前多少个头部目录参与集中度计算
+oversized_dir_file_threshold = 20
+top_n_concentration_count = 5
+
+[code_entropy.java.detectors.semantic]
+
+[code_entropy.java.detectors.semantic.term_extraction]
+# scan_targets 控制从文件名、类名还是两者提取术语。
+# Java 项目默认建议只统计 class_name，避免 file_stem 与类名重复计数。
+scan_targets = ["class_name"]
+token_patterns = ["[A-Z][a-z0-9]+"]
+# naming_ignore_class_suffixes 用来给 suffix 家族降噪，例如 Job / Task / Work。
+# 只有命名概念冲突在做 suffix 匹配时才会忽略这些包装类后缀，不影响前缀家族。
+naming_ignore_class_suffixes = ["DTO", "VO", "DO", "Req", "Resp", "Request", "Response"]
+
+[code_entropy.java.detectors.semantic.state_detection]
+# 状态承载体重复检测：先找“状态承载体”，再抽“状态项”，最后按重合度聚成重复簇。
+# carrier_name_patterns：哪些类名 / 枚举名会被当成状态承载体，例如 XxxStatus / XxxState。
+carrier_name_patterns = ["(?:^|.*)(?:Status|State)(?:.*|$)"]
+# constant_field_pattern：在 class 型状态承载体里，提取 public static final 常量名与右值。
+constant_field_pattern = "\\b(?:(?:public|protected|private|static|final|transient|volatile)\\s+){1,8}[A-Za-z_][\\w<>\\[\\].?]*\\s+([A-Z][A-Z0-9_]{2,})\\s*=\\s*([^;]+);"
+# string_literal_pattern / numeric_literal_pattern：当常量名不足以表达状态项时，用右值补充归一化。
+string_literal_pattern = "\"([A-Za-z][A-Za-z0-9_:-]*)\""
+numeric_literal_pattern = "\\b(\\d+)\\b"
+# strip_prefixes / strip_suffixes：归一化状态项时去掉的通用前后缀。
+# 例如 STATUS_DRAFT / DRAFT_STATUS / DRAFT_CODE 最终都会收敛成 DRAFT。
+strip_prefixes = ["STATUS_", "STATE_"]
+strip_suffixes = ["_STATUS", "_STATE", "_CODE", "_VALUE"]
+# ignore_item_patterns：归一化后直接忽略的状态项模式。
+# 这里先压掉 CD_1 / CD_2 / ... 这类模板编码，避免它们被误当成真实业务状态重复。
+ignore_item_patterns = ["^CD_\\d+$"]
+# min_carrier_items：一个状态载体至少抽到多少个状态项，才纳入统计。
+min_carrier_items = 2
+# min_shared_items：两个状态载体至少共享多少个状态项，才有资格判重。
+min_shared_items = 2
+# similarity_threshold：重复判定阈值，当前使用 overlap coefficient = shared / min(len(a), len(b))。
+similarity_threshold = 0.8
+# cluster_sample_limit：详情页最多展示多少组重复簇与每簇样例。
+cluster_sample_limit = 10
+
+# scatter_sample_limit：每个状态值最多内嵌多少个样例位置；问题表和定位表本身展示全部。
+scatter_sample_limit = 20
+
+# hardcoded_context_patterns：命中这些上下文字段名的字符串字面量，会按状态值散落候选统计。
+hardcoded_context_patterns = ["(?i)\\b(?:status|state|statusCd|statusCode|stateCd|stateCode)\\b"]
+
+[code_entropy.java.detectors.behavior]
+
+[code_entropy.java.detectors.behavior.error_patterns]
+# 错误处理模式识别正则。
+throw_exception = "throw\\s+new\\s+\\w+Exception"
+return_null = "return\\s+null"
+return_error_code = "return\\s+(-?\\d+|ERROR_\\w+)"
+try_catch = "try\\s*\\{[\\s\\S]*?\\}\\s*catch"
+log_error = "log\\.(error|warn|debug)\\s*\\("
+
+[code_entropy.java.detectors.behavior.return_patterns]
+# 返回模式识别正则。
+string_literal_pattern = "return\\s+\"[^\"]*\""
+boolean_literal_pattern = "return\\s+(?:true|false)\\b"
+null_return_pattern = "return\\s+null\\b"
+named_reference_pattern = "return\\s+[A-Za-z_]\\w*\\s*;"
+exception_pattern = "throw\\s+new\\s+(\\w+Exception)"
+
+[code_entropy.java.detectors.behavior.wrapped_error_responses]
+# 错误包装返回的静态工厂方法名。
+method_names = ["error", "fail", "failure", "failed", "badRequest", "serverError", "forbidden", "unauthorized"]
+include_return_only = true
+
+[code_entropy.java.detectors.behavior.business_exceptions]
+# 行为熵“业务异常未收敛”使用的标准业务异常集合。
+# 任意 Java 项目可以在这里配置团队认可的业务异常边界；未配置时默认使用 BusinessException。
+standard_types = ["BusinessException", "BcmcBusinessException", "BpcRiskBusinessException"]
+name_patterns = ["BusinessException$", "BizException$", "BssException$", "ServiceException$"]
+
+[code_entropy.java.detectors.cognition]
+# 认知熵相关 detector。
+owner_patterns = [
+  "@\\w+",
+  "(?i)owner\\s*[:=]\\s*[\\w.-]+",
+  "(?i)assignee\\s*[:=]\\s*[\\w.-]+",
+  "(?i)handler\\s*[:=]\\s*[\\w.-]+",
+  "(?i)maintainer\\s*[:=]\\s*[\\w.-]+",
+  "(?i)responsible\\s*[:=]\\s*[\\w.-]+",
+  "(?i)by\\s*[:=]\\s*[\\w.-]+",
+  "(?i)user\\s*[:=]\\s*[\\w.-]+",
+  "(?i)负责人\\s*[:：]\\s*\\S+",
+  "(?i)责任人\\s*[:：]\\s*\\S+",
+  "(?i)处理人\\s*[:：]\\s*\\S+",
+  "(?i)维护人\\s*[:：]\\s*\\S+",
+  "(?i)跟进人\\s*[:：]\\s*\\S+",
+  "(?i)经办人\\s*[:：]\\s*\\S+",
+]
+
+[code_entropy.java.detectors.cognition.debt_markers]
+# 技术债标记识别正则。
+todo = "//\\s*TODO[:\\s]*(.*)$"
+fixme = "//\\s*FIXME[:\\s]*(.*)$"
+hack = "//\\s*HACK[:\\s]*(.*)$"
+
+[code_entropy.java.detectors.cognition.project_docs]
+# 通用项目说明文档扫描配置；适用于任意 Java 项目，不绑定具体仓库目录。
+enabled = true
+entry_files = ["README.md", "README_CN.md", "README.zh-CN.md", "readme.md"]
+doc_roots = ["docs", "doc", "readme", "wiki"]
+doc_globs = ["*.md", "**/*.md", "*.adoc", "**/*.adoc"]
+ignore_dirs = ["target", "build", "dist", ".git", ".idea", "node_modules", "asset", "assets", "img", "images"]
+min_total_chars = 3000
+min_entry_chars = 500
+min_doc_files = 1
+required_topics = ["项目介绍", "环境准备", "本地启动", "配置说明", "项目结构", "构建部署", "开发规范"]
+
+[code_entropy.java.detectors.cognition.project_docs.topic_aliases]
+"项目介绍" = ["项目介绍", "项目说明", "概述", "背景", "Introduction", "Overview"]
+"环境准备" = ["环境准备", "环境设置", "运行环境", "JDK", "Java", "Maven", "Gradle", "Redis", "MySQL", "Nacos"]
+"本地启动" = ["本地启动", "快速开始", "快速入门", "启动", "运行", "Quick Start", "Getting Started"]
+"配置说明" = ["配置说明", "配置文件", "application.yml", "application.properties", "Nacos", "Config"]
+"项目结构" = ["项目结构", "目录结构", "模块说明", "Module", "Architecture"]
+"构建部署" = ["构建", "打包", "部署", "发布", "Docker", "CI", "Deploy"]
+"开发规范" = ["开发规范", "编码规范", "贡献指南", "代码规范", "Contributing"]
+
+[code_entropy.java.detectors.cognition.complexity]
+# 复杂度和大文件/大方法判定阈值。
+large_method_lines_threshold = 80
+large_class_lines_threshold = 500
+large_file_lines_threshold = 1500
+large_file_warning_threshold = 2000
+large_file_danger_threshold = 3000
+complex_method_branch_threshold = 10
+complex_method_nesting_threshold = 4
+method_signature_pattern = "(?P<visibility>public|private|protected)?\\s*(?:(?:static|final|abstract|synchronized|native|default)\\s+)*(?:<[^>]+>\\s*)?(?:[\\w\\[\\].<>?,]+)\\s+(?P<name>\\w+)\\s*\\([^;{}]*\\)\\s*(?:throws[^{]+)?\\{"
+
+[code_entropy.java.detectors.style]
+# 风格熵 detector。
+# 当前风格熵生产口径统一使用 Checkstyle 扫描结果。
+# 旧版自研“命名一致性/格式一致性/注释密度”不再参与主评分。
+
+[code_entropy.java.detectors.style.checkstyle]
+enabled = true
+mode = "auto"
+# Runtime JDK 1.8 走 jdk8；高于 1.8 走 jdk17。
+java_version_policy = "jdk8_or_jdk17"
+jdk8_jar = "entropy_audit/lang/java/tools/checkstyle/jdk8/checkstyle-8.17-all.jar"
+jdk8_config = "entropy_audit/lang/java/tools/checkstyle/jdk8/checkstyle.xml"
+jdk8_workdir = "entropy_audit/lang/java/tools/checkstyle/jdk8"
+jdk17_jar = "entropy_audit/lang/java/tools/checkstyle/jdk17/checkstyle-10.21.3-all.jar"
+jdk17_config = "entropy_audit/lang/java/tools/checkstyle/jdk17/checkstyle.xml"
+jdk17_workdir = "entropy_audit/lang/java/tools/checkstyle/jdk17"
+output_format = "xml"
+include_severities = ["error", "warning"]
+scan_extensions = [".java"]
+unknown_module_category = "style_code_smell"
+exclude_modules = [
+  "BeforeExecutionExclusionFileFilter",
+  "SeverityMatchFilter",
+  "SuppressionFilter",
+  "SuppressionCommentFilter",
+  "SuppressWithNearbyCommentFilter",
+  "AnnotationOnSameLine",
+  "MissingCtor",
+  "FinalParameters",
+  "RegexpSingleline",
+]
+
+[code_entropy.java.detectors.style.checkstyle.categories.style_formatting]
+label = "格式排版问题"
+description = "缩进、空白、换行、括号、空块等文本排版问题。"
+modules = [
+  "Header",
+  "RegexpHeader",
+  "FileTabCharacter",
+  "EmptyForInitializerPad",
+  "EmptyForIteratorPad",
+  "GenericWhitespace",
+  "MethodParamPad",
+  "NoLineWrap",
+  "NoWhitespaceBefore",
+  "NoWhitespaceAfter",
+  "ParenPad",
+  "SeparatorWrap",
+  "TypecastParenPad",
+  "WhitespaceAfter",
+  "WhitespaceAround",
+  "NeedBraces",
+  "EmptyBlock",
+]
+
+[code_entropy.java.detectors.style.checkstyle.categories.style_naming]
+label = "命名规范问题"
+description = "类名、方法名、包名、泛型参数、静态变量等命名不符合约定。"
+modules = [
+  "ClassTypeParameterName",
+  "InterfaceTypeParameterName",
+  "LocalFinalVariableName",
+  "MethodName",
+  "MethodTypeParameterName",
+  "PackageName",
+  "StaticVariableName",
+  "TypeName",
+  "OuterTypeFilename",
+  "RegexpOnFilename",
+]
+
+[code_entropy.java.detectors.style.checkstyle.categories.style_import]
+label = "导入规范问题"
+description = "星号导入、非法导入、冗余导入、未使用导入等引用清洁度问题。"
+modules = ["AvoidStarImport", "IllegalImport", "RedundantImport", "UnusedImports"]
+
+[code_entropy.java.detectors.style.checkstyle.categories.style_declaration]
+label = "注解与声明规范问题"
+description = "注解位置、Override、包注解、修饰符顺序、顶层类数量等声明规范问题。"
+modules = [
+  "AnnotationLocation",
+  "AnnotationUseStyle",
+  "MissingOverride",
+  "PackageAnnotation",
+  "ModifierOrder",
+  "OneTopLevelClass",
+  "OuterTypeNumber",
+  "InnerTypeLast",
+]
+
+[code_entropy.java.detectors.style.checkstyle.categories.style_code_smell]
+label = "编码坏味道问题"
+description = "空 catch、直接打印、字符串比较、equals/hashCode、控制变量修改等可维护性问题。"
+modules = [
+  "AvoidNestedBlocks",
+  "EmptyCatchBlock",
+  "CovariantEquals",
+  "DefaultComesLast",
+  "EmptyStatement",
+  "EqualsAvoidNull",
+  "EqualsHashCode",
+  "IllegalInstantiation",
+  "IllegalThrows",
+  "IllegalTokenText",
+  "IllegalType",
+  "InnerAssignment",
+  "MissingSwitchDefault",
+  "ModifiedControlVariable",
+  "MultipleVariableDeclarations",
+  "NoFinalizer",
+  "OneStatementPerLine",
+  "SimplifyBooleanExpression",
+  "SimplifyBooleanReturn",
+  "StringLiteralEquality",
+  "SuperClone",
+  "SuperFinalize",
+  "ArrayTypeStyle",
+  "AvoidEscapedUnicodeCharacters",
+  "DescendantToken",
+  "RegexpSinglelineJava",
+  "FinalClass",
+  "InterfaceIsType",
+]
+
+[code_entropy.java.detectors.style.checkstyle.categories.style_complexity]
+label = "复杂度与规模问题"
+description = "文件过长、嵌套过深、布尔表达式复杂、参数过多等理解成本问题。"
+modules = [
+  "FileLength",
+  "NestedForDepth",
+  "NestedIfDepth",
+  "NestedTryDepth",
+  "BooleanExpressionComplexity",
+  "ParameterNumber",
+]

@@ -11,6 +11,8 @@ Use this skill to run the repository's `entropy_audit` Python CLI, regenerate Ja
 
 This skill is stored in `.cursor/skills/entropy-audit` so Cursor can discover it from the repository. For Codex, Claude Code, or OpenClaw-style agents, use this same folder as the portable skill source; copy or symlink it into that tool's skill/rules directory when automatic discovery is required.
 
+The runnable Python tool is bundled under `assets/tool/entropy_audit`. Do not load the bundled source into context unless debugging or modifying the tool; use the runner script for normal audits.
+
 ## Preconditions
 
 The project root should contain:
@@ -42,7 +44,7 @@ Use the helper when the user wants the normal monthly report:
 python .cursor/skills/entropy-audit/scripts/run_entropy_audit.py --project-root . --period 2026-04
 ```
 
-The helper locates `entropy.config.toml`, prefers `entropy_audit` from `PATH`, falls back to `python -m entropy_audit.cli`, and writes reports to `reports/<period>` by default.
+The helper locates `entropy.config.toml`, prefers `entropy_audit` from `PATH`, falls back to a project-local `entropy_audit/`, then falls back to the bundled tool under `assets/tool/`. It writes reports to `reports/<period>` by default.
 
 Equivalent direct command:
 
@@ -112,3 +114,13 @@ python -m unittest discover -s tests -p "test*.py"
 ```
 
 Generated report HTML and JSON should not be hand-edited. Regenerate them with the CLI.
+
+## Bundled Tool Layout
+
+```text
+assets/tool/pyproject.toml
+assets/tool/entropy_audit/
+assets/tool/entropy_audit/lang/java/tools/checkstyle/
+```
+
+The bundled Checkstyle jars are intentionally included so Java style entropy can run without fetching external binaries.

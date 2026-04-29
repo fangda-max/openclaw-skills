@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import os
 import shutil
 import subprocess
 import sys
@@ -19,16 +20,22 @@ def find_project_root(start: Path) -> Path:
     return current
 
 
-def cli_prefix(project_root: Path) -> list[str]:
+def cli_invocation(project_root: Path, bundled_tool_root: Path) -> tuple[list[str], dict[str, str]]:
     if shutil.which("entropy_audit"):
-        return ["entropy_audit"]
+        return ["entropy_audit"], {}
     if shutil.which("entropy-audit"):
-        return ["entropy-audit"]
+        return ["entropy-audit"], {}
     if (project_root / "entropy_audit" / "cli.py").is_file():
-        return [sys.executable, "-m", "entropy_audit.cli"]
+        return [sys.executable, "-m", "entropy_audit.cli"], {}
+    if (bundled_tool_root / "entropy_audit" / "cli.py").is_file():
+        return [sys.executable, "-m", "entropy_audit.cli"], {
+            "PYTHONPATH": str(bundled_tool_root)
+            + os.pathsep
+            + os.environ.get("PYTHONPATH", "")
+        }
     raise SystemExit(
-        "Cannot find entropy_audit CLI. Install the package or run from a repository "
-        "containing entropy_audit/."
+        "Cannot find entropy_audit CLI. Install the package, run from a repository "
+        "containing entropy_audit/, or keep the bundled tool under assets/tool."
     )
 
 
@@ -44,8 +51,10 @@ def main() -> int:
     args = parser.parse_args()
 
     root = find_project_root(Path(args.project_root))
+    skill_root = Path(__file__).resolve().parents[1]
+    bundled_tool_root = skill_root / "assets" / "tool"
     out_dir = args.out_dir or str(Path("reports") / args.period)
-    prefix = cli_prefix(root)
+    prefix, env_updates = cli_invocation(root, bundled_tool_root)
 
     command = [
         *prefix,
@@ -65,7 +74,9 @@ def main() -> int:
     ]
 
     print("Running:", " ".join(command))
-    completed = subprocess.run(command, cwd=root)
+    env = os.environ.copy()
+    env.update(env_updates)
+    completed = subprocess.run(command, cwd=root, env=env)
     return completed.returncode
 
 
